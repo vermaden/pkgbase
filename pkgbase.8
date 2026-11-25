@@ -1,0 +1,93 @@
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd November 25, 2026
+.Dt PKGBASE 8
+.Os
+.Sh NAME
+.Nm pkgbase
+.Nd FreeBSD upgrade tool in PKGBASE world similar to freebsd-update(8) command.
+.Sh SYNOPSIS
+.Nm
+.Cm help
+.Nm
+.Cm upgrade -r
+.Ar VERSION
+.Op Fl L
+.Op Fl B
+.Nm
+.Cm loader
+.Nm
+.Cm pkgnew
+.Nm
+.Cm modules
+.Nm
+.Cm version
+.Sh DESCRIPTION
+.Nm 
+is a upgrade tool in FreeBSD PKGBASE world, similar to
+.Xr freebsd-update 8
+command.
+.Sh DESCRIPTION
+The 
+.Nm
+utility implements updating of a pkgbase FreeBSD system similar to the
+.Xr freebsd-update 8
+did for non-pkgbase FreeBSD systems. It automates the upgrade and update of the FreeBSD system and uses
+.Xr bectl 8
+for boot-environment creation for ZFS based systems. It also handles the UEFI/BIOS bootcode upgrade.
+.Nm 
+can also be used to do upgrade inside a jail.
+.Ss Supported Subcommands and Flags
+.Bl -tag -width indent
+
+.It Xo
+.Cm help
+.Xc
+.br
+Print usage information and exit.
+.It Xo
+.Cm upgrade
+.Fl r Ar VERSION
+.Op Fl L
+.Op Fl B
+.Xc
+.br
+Upgrade the system to a new FreeBSD release. The
+.Ar VERSION
+string expects the format of the FreeBSD release string. e.g. 15.1-RELEASE or 15.2-BETA2. The -L flag omits upgrading the UEFI/BIOS bootcode. Flag -B omits creating a ZFS Boot Environment, default for UFS based systems.
+.It Xo
+.Cm loader
+.Xc
+.br
+Runs only the UEFI/BIOS bootcode upgrade.
+.It Xo
+.Cm pkgnew
+.Xc
+.br
+Check for config files with .pkgnew suffix. If any files will be listed, manually check them with
+.Xr diff 1
+and merge any necessary changes.
+.It Xo
+.Cm modules
+.Xc
+.br
+Check for 3rd party kmods installed from packages.
+.It Xo
+.Cm version
+.Xc
+.br
+Print pkgbase version and exit.
+.Sh EXAMPLES
+To upgrade the system to FreeBSD 15.2-BETA2 run:
+.Pp
+.Dl pkgbase upgrade -r 15.2-BETA2
+.Pp
+.Sh SEE ALSO
+.Xr freebsd-update 3 ,
+.Xr bectl 8,
+.Xr zfs 8,
+.Xr gpart 8
+.Sh AUTHORS
+.Nm
+.An was written by Slawomir Wojciech Wojtczak (vermaden) Aq Mt vermaden@interia.pl
