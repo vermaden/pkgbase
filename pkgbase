@@ -42,12 +42,12 @@ __usage() {
   NAME=${0##*/}
   echo "usage:"
   echo "  ${NAME} upgrade -r VERSION [-L] [-B]"
+  echo "  ${NAME} patch [-L] [-B]"
   echo "  ${NAME} loader"
   echo "  ${NAME} pkgnew"
   echo "  ${NAME} modules"
   echo "  ${NAME} version"
   echo "  ${NAME} help"
-  echo "  ${NAME} patch"
   echo
   echo "options:"
   echo "  -r VERSION  FreeBSD version you want to upgrade to"
@@ -353,7 +353,7 @@ trap '__clean' 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15
 case "${1}" in
   (--version|-version|version)
     echo
-    echo "pkgbase(8) 0.7 2026/11/26"
+    echo "pkgbase(8) 0.8 2026/11/26"
     echo
     exit 1
     ;;
@@ -368,19 +368,19 @@ case "${1}" in
     # CHECK IF ITS PKGBASE SYSTEM
     __check_pkgbase
 
-    # SAVE KERNEL VERSION BEFORE UPGRADE
+    # SAVE KERNEL AND PACKAGES VERSION BEFORE UPGRADE
     KERNEL_BEF=$( pkg info FreeBSD-kernel-generic | awk '/^Version/ {print $NF}' )
+    PKGINFO_BEF=$( pkg info | awk '/FreeBSD-/ {print $1}' | sort -n )
 
     # shift THE 'upgrade' PARAMETER
     shift
 
     # OBTAIN ARGUMENTS FOR OPTIONS
-    while getopts r:LB ARG
+    while getopts LB ARG
     do
       case "${ARG}" in
         (L) ARG_BOOT="no"        ;;
         (B) ARG_BENV="no"        ;;
-        (r) ARG_VERS="${OPTARG}" ;;
         (*) __usage              ;;
       esac
     done
@@ -394,20 +394,6 @@ case "${1}" in
       echo "INFO: ZFS Boot Environment creation is disabled"
     else
       __zfsbe
-    fi
-
-    # CREATE DIR FOR TEMP UPGRADE REPO
-    if ! mkdir -p "/tmp/${VER_REG}" 1> /dev/null 2> /dev/null
-    then
-      echo "NOPE: could not create '/tmp/${VER_REG}' dir"
-      exit 1
-    fi
-
-    # CHECK IF POSSIBLE TO CREATE REPO CONFIG
-    if ! touch "/tmp/${VER_REG}/repo.conf" 1> /dev/null 2> /dev/null
-    then
-      echo "NOPE: could not create '/tmp/${VER_REG}/repo.conf' file"
-      exit 1
     fi
 
     # FIRST UPGRADE ONLY THE pkg(8) TOOL
@@ -444,20 +430,43 @@ case "${1}" in
       exit 1
     fi
 
-    # UPGRADE FreeBSD loader(8) BOOTCODE OR NOT IF '-L' OPTION USED
-    if [ "${ARG_BOOT}" = "no" ]
+    PKGINFO_AFT=$( pkg info | awk '/FreeBSD-/ {print $1}' | sort -n )
+
+    if [ "${PKGINFO_BEF}" != "${PKGINFO_AFT}" ]
     then
-      echo "INFO: UEFI/BIOS bootcode update is disabled"
+
+      # UPGRADE FreeBSD loader(8) BOOTCODE OR NOT IF '-L' OPTION USED
+      if [ "${ARG_BOOT}" = "no" ]
+      then
+        echo "INFO: UEFI/BIOS bootcode update is disabled"
+      else
+        __loader
+      fi
+
+      # CHECK FOR *.pkgnew FILES
+      __pkgnew
+
+      echo "INFO: you successfully finished patch level update"
+
+      # GET KERNEL VERSION AFTER UPDATE
+      KERNEL_AFT=$( pkg info FreeBSD-kernel-generic | awk '/^Version/ {print $NF}' )
+
+      # DISPLAY DIFFERENT MESSAGE DEPENDING IF KERNEL WAS UPDATED OR NOT
+      if [ "${KERNEL_BEF}" != "${KERNEL_AFT}" ]
+      then
+        echo "INFO: you may now restart the system with usual command"
+        echo "INFO:   # shutdown -r now"
+      else
+        echo "INFO: system patched - use 'sysutils/checkrestart' to check what to restart"
+      fi
+
     else
-      __loader
+
+      echo "INFO: no new patches/packages has been applied by pkgbase(8) tool"
+      exit 0
+
     fi
 
-    # CHECK FOR *.pkgnew FILES
-    __pkgnew
-
-    echo "INFO: you successfully finished the upgrade process"
-    echo "INFO: you may now restart the system with usual command"
-    echo "INFO:   # shutdown -r now"
     ;;
 
   (upgrade)
@@ -540,6 +549,23 @@ case "${1}" in
     if echo "${VER_REG}" | grep -q -- '-RELEASE'
     then
 
+      # IF 15.0-RELEASE IS TO BE UPGRADED ADDITIONAL WORKAROUND IS NEEDED
+      # PAM/zstd MOVED OUT OF runtime/utilities INTO NEW pam*/zstd* ONES
+      # DETAILS: https://github.com/freebsd/pkg/issues/2790
+      if echo ${VER_INS} | awk -F '-' '{print $1}' | grep -q "15.0"
+      then
+        pkg delete -f -y FreeBSD-utilities-lib32
+
+        # CHECK IF pkg(8) DELETED FreeBSD-utilities-lib32 PACKAGE
+        if [ "${?}" != "0" ]
+        then
+          echo "NOPE: failed to delete 'FreeBSD-utilities-lib32' package"
+          exit 1
+        else
+          echo "NOPE: removed problematic 'FreeBSD-utilities-lib32' package"
+        fi
+      fi
+
       echo "INFO: major upgrade between RELEASE versions"
 
       TARGET="${VER_NUM_MJR}0${VER_NUM_MIN}000"
@@ -548,21 +574,84 @@ case "${1}" in
           -o OSVERSION=${TARGET} upgrade \
           -y -r FreeBSD-base
 
+      # CHECK IF pkg(8) UPGRADE FOR FreeBSD-base WORKED
+      if [ "${?}" != "0" ]
+      then
+        echo "NOPE: failed to upgrade FreeBSD Base System with pkg(8) command"
+        echo "HINT: if pkg(8) failed at fetch just run pkgbase(8) again"
+        exit 1
+      fi
+
+      # IF 15.0-RELEASE IS TO BE UPGRADED ADDITIONAL WORKAROUND IS NEEDED
+      # PAM/zstd MOVED OUT OF runtime/utilities INTO NEW pam*/zstd* ONES
+      # DETAILS: https://github.com/freebsd/pkg/issues/2790
+      if echo ${VER_INS} | awk -F '-' '{print $1}' | grep -q "15.0"
+      then
+        pkg -o ABI=FreeBSD:${VER_NUM_MJR}:$(uname -p) \
+          -o OSVERSION=${TARGET} -o IGNORE_OSVERSION=yes install \
+          -y -r FreeBSD-base FreeBSD-set-lib32
+      fi
+
+      # CHECK IF pkg(8) UPGRADE FOR FreeBSD-base WORKED
+      if [ "${?}" != "0" ]
+      then
+        echo "NOPE: failed to upgrade FreeBSD Base System with pkg(8) command"
+        echo "HINT: if pkg(8) failed at fetch just run pkgbase(8) again"
+        exit 1
+      fi
+
     else
+
+      # IF 15.0-RELEASE IS TO BE UPGRADED ADDITIONAL WORKAROUND IS NEEDED
+      # PAM/zstd MOVED OUT OF runtime/utilities INTO NEW pam*/zstd* ONES
+      # DETAILS: https://github.com/freebsd/pkg/issues/2790
+      if echo ${VER_INS} | awk -F '-' '{print $1}' | grep -q "15.0"
+      then
+        pkg delete -f -y FreeBSD-utilities-lib32
+      fi
+
+      # CHECK IF pkg(8) UPGRADE FOR FreeBSD-base WORKED
+      if [ "${?}" != "0" ]
+      then
+        echo "NOPE: failed to upgrade FreeBSD Base System with pkg(8) command"
+        echo "HINT: if pkg(8) failed at fetch just run pkgbase(8) again"
+        exit 1
+      else
+        echo "NOPE: removed problematic 'FreeBSD-utilities-lib32' package"
+      fi
 
       # DO ACTUAL FreeBSD Base System UPGRADE
       pkg -o REPOS_DIR=/etc/pkg,/usr/local/etc/pkg/repos,"/tmp/${VER_REG}" \
           -o IGNORE_OSVERSION=yes upgrade \
           -y -r FreeBSD-base
 
-    fi
+      # CHECK IF pkg(8) UPGRADE FOR FreeBSD-base WORKED
+      if [ "${?}" != "0" ]
+      then
+        echo "NOPE: failed to upgrade FreeBSD Base System with pkg(8) command"
+        echo "HINT: if pkg(8) failed at fetch just run pkgbase(8) again"
+        exit 1
+      fi
 
-    # CHECK IF pkg(8) UPGRADE FOR FreeBSD-base WORKED
-    if [ "${?}" != "0" ]
-    then
-      echo "NOPE: failed to upgrade FreeBSD Base System with pkg(8) command"
-      echo "HINT: if pkg(8) failed at fetch just run pkgbase(8) again"
-      exit 1
+      # IF 15.0-RELEASE IS TO BE UPGRADED ADDITIONAL WORKAROUND IS NEEDED
+      # PAM/zstd MOVED OUT OF runtime/utilities INTO NEW pam*/zstd* ONES
+      # DETAILS: https://github.com/freebsd/pkg/issues/2790
+      if echo ${VER_INS} | awk -F '-' '{print $1}' | grep -q "15.0"
+      then
+        pkg -o REPOS_DIR=/etc/pkg,/usr/local/etc/pkg/repos,"/tmp/${VER_REG}" \
+          -o IGNORE_OSVERSION=yes install \
+          -y -r FreeBSD-base FreeBSD-set-lib32
+
+        # CHECK IF pkg(8) UPGRADE FOR FreeBSD-base WORKED
+        if [ "${?}" != "0" ]
+        then
+          echo "NOPE: failed to upgrade FreeBSD Base System with pkg(8) command"
+          echo "HINT: if pkg(8) failed at fetch just run pkgbase(8) again"
+          exit 1
+        fi
+
+      fi
+
     fi
 
     echo "INFO: review pkg(8) info - sometimes 'service <name> setup' is needed"
@@ -590,19 +679,10 @@ case "${1}" in
     # CHECK FOR *.pkgnew FILES
     __pkgnew
 
-    echo "INFO: you successfully finished patch level update"
+    echo "INFO: you successfully finished the upgrade process"
+    echo "INFO: you may now restart the system with usual command"
+    echo "INFO:   # shutdown -r now"
 
-    # GET KERNEL VERSION AFTER UPDATE
-    KERNEL_AFT=$( pkg info FreeBSD-kernel-generic | awk '/^Version/ {print $NF}' )
-
-    # DISPLAY DIFFERENT MESSAGE DEPENDING IF KERNEL WAS UPDATED OR NOT
-    if [ "${KERNEL_BEF}" = "${KERNEL_AFT}" ]
-    then
-      echo "INFO: you may now restart the system with usual command"
-      echo "INFO:   # shutdown -r now"
-    else
-      echo "INFO: system patched - use 'sysutils/checkrestart' to check what to restart"
-    fi
     ;;
 
   (loader)
