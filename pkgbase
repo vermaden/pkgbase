@@ -36,6 +36,7 @@ ARG_BOOT=${ARG_BOOT:-"yes"}
 ARG_BENV=${ARG_BENV:-"yes"}
 ARG_JAIL=${ARG_JAIL:-"no"}
 ARG_VERS=${ARG_VERS:-""}
+LIB32_UTILS=${LIB32_UTILS:-"0"}
 
 # DISPLAY USAGE INFORMATION
 __usage() {
@@ -62,7 +63,7 @@ __usage() {
   exit 1
 }
 
-# CHECK THAT WE OPERATE ON A PKGBASE SYSTEM IN THE FIRST PLACE
+# CHECK THAT WE OPERATE ON PKGBASE SYSTEM IN THE FIRST PLACE
 __check_pkgbase() {
   if ! pkg which -o /bin/ls 1> /dev/null 2> /dev/null
   then
@@ -353,7 +354,7 @@ trap '__clean' 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15
 case "${1}" in
   (--version|-version|version)
     echo
-    echo "pkgbase(8) 0.8 2026/11/26"
+    echo "pkgbase(8) 0.9 2026/11/27"
     echo
     exit 1
     ;;
@@ -379,6 +380,7 @@ case "${1}" in
     while getopts LB ARG
     do
       case "${ARG}" in
+
         (L) ARG_BOOT="no"        ;;
         (B) ARG_BENV="no"        ;;
         (*) __usage              ;;
@@ -483,16 +485,28 @@ case "${1}" in
     # shift THE 'upgrade' PARAMETER
     shift
 
+    # MAKE SURE VERSION IS SPECIFIED
+    ARG_VERS_USED=0
+
     # OBTAIN ARGUMENTS FOR OPTIONS
     while getopts r:LB ARG
     do
       case "${ARG}" in
         (L) ARG_BOOT="no"        ;;
         (B) ARG_BENV="no"        ;;
-        (r) ARG_VERS="${OPTARG}" ;;
-        (*) __usage              ;;
+        (r) ARG_VERS="${OPTARG}"
+            ARG_VERS_USED=1      ;;
+        (*) echo
+            __usage              ;;
       esac
     done
+
+    # MAKE SURE VERSION IS SPECIFIED
+    if [ "${ARG_VERS_USED}" = "0" ]
+    then
+      echo "NOPE: specify FreeBSD version for -r option"
+      exit 1
+    fi
 
     # VERIFY VERSIONS FOR UPGRADE
     __ver_regex "${ARG_VERS}"
@@ -549,12 +563,20 @@ case "${1}" in
     if echo "${VER_REG}" | grep -q -- '-RELEASE'
     then
 
+      echo "INFO: major upgrade between RELEASE versions"
+
       # IF 15.0-RELEASE IS TO BE UPGRADED ADDITIONAL WORKAROUND IS NEEDED
       # PAM/zstd MOVED OUT OF runtime/utilities INTO NEW pam*/zstd* ONES
       # DETAILS: https://github.com/freebsd/pkg/issues/2790
       if echo ${VER_INS} | awk -F '-' '{print $1}' | grep -q "15.0"
       then
-        pkg delete -f -y FreeBSD-utilities-lib32
+
+        # REMOVE FreeBSD-utilities-lib32 PACKAGE IF INSTALLED
+        if pkg info -q FreeBSD-utilities-lib32
+        then
+          LIB32_UTILS=1
+          pkg delete -f -y FreeBSD-utilities-lib32
+        fi
 
         # CHECK IF pkg(8) DELETED FreeBSD-utilities-lib32 PACKAGE
         if [ "${?}" != "0" ]
@@ -562,14 +584,12 @@ case "${1}" in
           echo "NOPE: failed to delete 'FreeBSD-utilities-lib32' package"
           exit 1
         else
-          echo "NOPE: removed problematic 'FreeBSD-utilities-lib32' package"
+          echo "INFO: removed problematic 'FreeBSD-utilities-lib32' package"
         fi
       fi
 
-      echo "INFO: major upgrade between RELEASE versions"
-
+      # DO ACTUAL FreeBSD Base System UPGRADE
       TARGET="${VER_NUM_MJR}0${VER_NUM_MIN}000"
-
       pkg -o ABI=FreeBSD:${VER_NUM_MJR}:$(uname -p) \
           -o OSVERSION=${TARGET} upgrade \
           -y -r FreeBSD-base
@@ -587,17 +607,27 @@ case "${1}" in
       # DETAILS: https://github.com/freebsd/pkg/issues/2790
       if echo ${VER_INS} | awk -F '-' '{print $1}' | grep -q "15.0"
       then
-        pkg -o ABI=FreeBSD:${VER_NUM_MJR}:$(uname -p) \
-          -o OSVERSION=${TARGET} -o IGNORE_OSVERSION=yes install \
-          -y -r FreeBSD-base FreeBSD-set-lib32
-      fi
 
-      # CHECK IF pkg(8) UPGRADE FOR FreeBSD-base WORKED
-      if [ "${?}" != "0" ]
-      then
-        echo "NOPE: failed to upgrade FreeBSD Base System with pkg(8) command"
-        echo "HINT: if pkg(8) failed at fetch just run pkgbase(8) again"
-        exit 1
+        # REINSTALL FreeBSD-set-lib32 PACKAGE
+        if [ "${LIB32_UTILS}" != "0" ]
+        then
+
+          # INSTALL FreeBSD-utilities-lib32 PACKAGE
+          pkg -o ABI=FreeBSD:${VER_NUM_MJR}:$(uname -p) \
+            -o OSVERSION=${TARGET} -o IGNORE_OSVERSION=yes install \
+            -y -r FreeBSD-base FreeBSD-set-lib32
+
+          # CHECK IF pkg(8) INSTALLED FreeBSD-utilities-lib32 PACKAGE
+          if [ "${?}" != "0" ]
+          then
+            echo "NOPE: failed to install 'FreeBSD-utilities-lib32' package"
+            exit 1
+          else
+            echo "INFO: installed problematic 'FreeBSD-utilities-lib32' package"
+          fi
+
+        fi
+
       fi
 
     else
@@ -607,17 +637,24 @@ case "${1}" in
       # DETAILS: https://github.com/freebsd/pkg/issues/2790
       if echo ${VER_INS} | awk -F '-' '{print $1}' | grep -q "15.0"
       then
-        pkg delete -f -y FreeBSD-utilities-lib32
-      fi
 
-      # CHECK IF pkg(8) UPGRADE FOR FreeBSD-base WORKED
-      if [ "${?}" != "0" ]
-      then
-        echo "NOPE: failed to upgrade FreeBSD Base System with pkg(8) command"
-        echo "HINT: if pkg(8) failed at fetch just run pkgbase(8) again"
-        exit 1
-      else
-        echo "NOPE: removed problematic 'FreeBSD-utilities-lib32' package"
+        # REMOVE FreeBSD-utilities-lib32 PACKAGE IF INSTALLED
+        if pkg info -q FreeBSD-utilities-lib32
+        then
+          LIB32_UTILS=1
+          pkg delete -f -y FreeBSD-utilities-lib32
+        fi
+
+        # CHECK IF pkg(8) UPGRADE FOR FreeBSD-base WORKED
+        if [ "${?}" != "0" ]
+        then
+          echo "NOPE: failed to delete 'FreeBSD-utilities-lib32' package"
+          echo "HINT: if pkg(8) failed at fetch just run pkgbase(8) again"
+          exit 1
+        else
+          echo "NOPE: removed problematic 'FreeBSD-utilities-lib32' package"
+        fi
+
       fi
 
       # DO ACTUAL FreeBSD Base System UPGRADE
@@ -638,16 +675,25 @@ case "${1}" in
       # DETAILS: https://github.com/freebsd/pkg/issues/2790
       if echo ${VER_INS} | awk -F '-' '{print $1}' | grep -q "15.0"
       then
-        pkg -o REPOS_DIR=/etc/pkg,/usr/local/etc/pkg/repos,"/tmp/${VER_REG}" \
-          -o IGNORE_OSVERSION=yes install \
-          -y -r FreeBSD-base FreeBSD-set-lib32
 
-        # CHECK IF pkg(8) UPGRADE FOR FreeBSD-base WORKED
-        if [ "${?}" != "0" ]
+        # REINSTALL FreeBSD-set-lib32 PACKAGE
+        if [ "${LIB32_UTILS}" != "0" ]
         then
-          echo "NOPE: failed to upgrade FreeBSD Base System with pkg(8) command"
-          echo "HINT: if pkg(8) failed at fetch just run pkgbase(8) again"
-          exit 1
+
+          # INSTALL FreeBSD-utilities-lib32 PACKAGE
+          pkg -o REPOS_DIR=/etc/pkg,/usr/local/etc/pkg/repos,"/tmp/${VER_REG}" \
+            -o IGNORE_OSVERSION=yes install \
+            -y -r FreeBSD-base FreeBSD-set-lib32
+
+          # CHECK IF pkg(8) INSTALLED FreeBSD-utilities-lib32 PACKAGE
+          if [ "${?}" != "0" ]
+          then
+            echo "NOPE: failed to install 'FreeBSD-utilities-lib32' package"
+            exit 1
+          else
+            echo "INFO: installed problematic 'FreeBSD-utilities-lib32' package"
+          fi
+
         fi
 
       fi
