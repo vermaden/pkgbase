@@ -8,12 +8,12 @@ FreeBSD `pkgbase(8)` upgrade tool in PKGBASE world similar to `freebsd-update(8)
 freebsd # pkgbase
 usage:
   pkgbase upgrade -r VERSION [-L] [-B]
+  pkgbase patch [-L] [-B]
   pkgbase loader
   pkgbase pkgnew
   pkgbase modules
   pkgbase version
   pkgbase help
-  pkgbase patch
 
 options:
   -r VERSION  FreeBSD version you want to upgrade to
@@ -36,6 +36,11 @@ Updating FreeBSD-ports repository catalogue...
 ```
 
 ## Changelog
+
+**0.8**
+- Compare installed packages before and after.
+- Do not use `/tmp/${VER_REG}` for `patch` option.
+- Overcome 15.0-RELEASE https://github.com/freebsd/pkg/issues/2790 upgrade problem.
 
 **0.7**
 - Add `patch` argument that mimics `# freebsd-update fetch install` command.
