@@ -47,11 +47,17 @@ __usage() {
   echo "  ${NAME} modules"
   echo "  ${NAME} version"
   echo "  ${NAME} help"
+  echo "  ${NAME} patch"
   echo
   echo "options:"
   echo "  -r VERSION  FreeBSD version you want to upgrade to"
   echo "  -L          omit UEFI/BIOS bootcode upgrade process"
   echo "  -B          omit ZFS Boot Environment creation"
+  echo
+  echo "hint:"
+  echo "  # ${NAME} patch"
+  echo "    (above command does the same in PKGBASE world as the one below)"
+  echo "  # freebsd-update fetch install"
   echo
   exit 1
 }
@@ -347,7 +353,7 @@ trap '__clean' 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15
 case "${1}" in
   (--version|-version|version)
     echo
-    echo "pkgbase(8) 0.6 2026/11/24"
+    echo "pkgbase(8) 0.7 2026/11/26"
     echo
     exit 1
     ;;
@@ -357,7 +363,105 @@ esac
 
 # MAIN
 case "${1}" in
+  (patch)
+
+    # CHECK IF ITS PKGBASE SYSTEM
+    __check_pkgbase
+
+    # SAVE KERNEL VERSION BEFORE UPGRADE
+    KERNEL_BEF=$( pkg info FreeBSD-kernel-generic | awk '/^Version/ {print $NF}' )
+
+    # shift THE 'upgrade' PARAMETER
+    shift
+
+    # OBTAIN ARGUMENTS FOR OPTIONS
+    while getopts r:LB ARG
+    do
+      case "${ARG}" in
+        (L) ARG_BOOT="no"        ;;
+        (B) ARG_BENV="no"        ;;
+        (r) ARG_VERS="${OPTARG}" ;;
+        (*) __usage              ;;
+      esac
+    done
+
+    # CHECK IF WE RUN INSIDE JAIL
+    __check_jailed
+
+    # CREATE ZFS Boot Environment BEFORE CHANGES
+    if [ "${ARG_BENV}" = "no" ]
+    then
+      echo "INFO: ZFS Boot Environment creation is disabled"
+    else
+      __zfsbe
+    fi
+
+    # CREATE DIR FOR TEMP UPGRADE REPO
+    if ! mkdir -p "/tmp/${VER_REG}" 1> /dev/null 2> /dev/null
+    then
+      echo "NOPE: could not create '/tmp/${VER_REG}' dir"
+      exit 1
+    fi
+
+    # CHECK IF POSSIBLE TO CREATE REPO CONFIG
+    if ! touch "/tmp/${VER_REG}/repo.conf" 1> /dev/null 2> /dev/null
+    then
+      echo "NOPE: could not create '/tmp/${VER_REG}/repo.conf' file"
+      exit 1
+    fi
+
+    # FIRST UPGRADE ONLY THE pkg(8) TOOL
+    pkg upgrade -y -r FreeBSD-ports pkg
+
+    # CHECK IF pkg(8) IS ABLE TO UPGRADE ITSELF
+    if [ "${?}" != "0" ]
+    then
+      echo "NOPE: failed to upgrade pkg(8) package"
+      echo "HINT: if pkg(8) failed at fetch just run pkgbase(8) again"
+      exit 1
+    fi
+
+    # DO ACTUAL FreeBSD Base System PATCH LEVEL UPDATE
+    pkg upgrade -y -r FreeBSD-base
+
+    # CHECK IF pkg(8) PATCH UPDATE FOR FreeBSD-base WORKED
+    if [ "${?}" != "0" ]
+    then
+      echo "NOPE: pkg(8) failed to update patch level for FreeBSD Base System"
+      echo "HINT: if pkg(8) failed at fetch just run pkgbase(8) again"
+      exit 1
+    fi
+
+    # UPGRADE KERNEL MODULES FROM FreeBSD-ports-kmods REPO
+    pkg -o REPOS_DIR=/etc/pkg,/usr/local/etc/pkg/repos,"/tmp/${VER_REG}" upgrade \
+        -y -r FreeBSD-ports-kmods
+
+    # CHECK IF pkg(8) PATCH LEVEL UPDATE FOR FreeBSD-ports-kmods REPO WORKED
+    if [ "${?}" != "0" ]
+    then
+      echo "NOPE: failed to patch level update FreeBSD KMODs with pkg(8) command"
+      echo "HINT: if pkg(8) failed at fetch just run pkgbase(8) again"
+      exit 1
+    fi
+
+    # UPGRADE FreeBSD loader(8) BOOTCODE OR NOT IF '-L' OPTION USED
+    if [ "${ARG_BOOT}" = "no" ]
+    then
+      echo "INFO: UEFI/BIOS bootcode update is disabled"
+    else
+      __loader
+    fi
+
+    # CHECK FOR *.pkgnew FILES
+    __pkgnew
+
+    echo "INFO: you successfully finished the upgrade process"
+    echo "INFO: you may now restart the system with usual command"
+    echo "INFO:   # shutdown -r now"
+    ;;
+
   (upgrade)
+
     # CHECK IF ITS PKGBASE SYSTEM
     __check_pkgbase
 
@@ -409,9 +513,16 @@ case "${1}" in
       exit 1
     fi
 
+    if echo "${VER_REG}" | grep -q -- '-RELEASE'
+    then
+      SUFFIX=${VER_NUM_MIN}
+    else
+      SUFFIX=${VER_NUM_MIN}_${VER_CLS_LOW}
+    fi
+
     # CREATE ACTUAL REPO CONFIG
     echo "FreeBSD-base: {
-            url: \"https://pkg.FreeBSD.org/\${ABI}/base_release_${VER_NUM_MIN}_${VER_CLS_LOW}\"
+            url: \"https://pkg.FreeBSD.org/\${ABI}/base_release_${SUFFIX}\"
           }" > "/tmp/${VER_REG}/repo.conf"
 
     # FIRST UPGRADE ONLY THE pkg(8) TOOL
@@ -440,7 +551,6 @@ case "${1}" in
     else
 
       # DO ACTUAL FreeBSD Base System UPGRADE
-      # REASON FOR -U FLAG: pkg(8) ALREADY UPDATED REPOS IN PREVIOUS COMMAND
       pkg -o REPOS_DIR=/etc/pkg,/usr/local/etc/pkg/repos,"/tmp/${VER_REG}" \
           -o IGNORE_OSVERSION=yes upgrade \
           -y -r FreeBSD-base
@@ -458,7 +568,6 @@ case "${1}" in
     echo "INFO: review pkg(8) info - sometimes 'service <name> setup' is needed"
 
     # UPGRADE KERNEL MODULES FROM FreeBSD-ports-kmods REPO
-    # REASON FOR -U FLAG: pkg(8) ALREADY UPDATED REPOS IN PREVIOUS COMMAND
     pkg -o REPOS_DIR=/etc/pkg,/usr/local/etc/pkg/repos,"/tmp/${VER_REG}" upgrade \
         -y -r FreeBSD-ports-kmods
 
@@ -481,9 +590,19 @@ case "${1}" in
     # CHECK FOR *.pkgnew FILES
     __pkgnew
 
-    echo "INFO: you successfully finished the upgrade process"
-    echo "INFO: you may now restart the system with usual command"
-    echo "INFO:   # shutdown -r now"
+    echo "INFO: you successfully finished patch level update"
+
+    # GET KERNEL VERSION AFTER UPDATE
+    KERNEL_AFT=$( pkg info FreeBSD-kernel-generic | awk '/^Version/ {print $NF}' )
+
+    # DISPLAY DIFFERENT MESSAGE DEPENDING IF KERNEL WAS UPDATED OR NOT
+    if [ "${KERNEL_BEF}" = "${KERNEL_AFT}" ]
+    then
+      echo "INFO: you may now restart the system with usual command"
+      echo "INFO:   # shutdown -r now"
+    else
+      echo "INFO: system patched - use 'sysutils/checkrestart' to check what to restart"
+    fi
     ;;
 
   (loader)
