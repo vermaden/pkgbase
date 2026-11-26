@@ -13,11 +13,17 @@ usage:
   pkgbase modules
   pkgbase version
   pkgbase help
+  pkgbase patch
 
 options:
   -r VERSION  FreeBSD version you want to upgrade to
   -L          omit UEFI/BIOS bootcode upgrade process
   -B          omit ZFS Boot Environment creation
+
+hint:
+  # pkgbase patch
+    (above command does the same in PKGBASE world as the one below)
+  # freebsd-update fetch install
 ```
 
 ## Example
@@ -30,6 +36,11 @@ Updating FreeBSD-ports repository catalogue...
 ```
 
 ## Changelog
+
+**0.7**
+- Add `patch` argument that mimics `# freebsd-update fetch install` command.
+- Fix repo config suffix.
+- Remove pointless comments.
 
 **0.6**
 - Only check target FreeBSD version for RELEASE.
