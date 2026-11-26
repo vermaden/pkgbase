@@ -37,6 +37,10 @@ Updating FreeBSD-ports repository catalogue...
 
 ## Changelog
 
+**0.9**
+- Add additional checks for `-r` argument.
+- Check if `FreeBSD-utilities-lib32` is installed.
+
 **0.8**
 - Compare installed packages before and after.
 - Do not use `/tmp/${VER_REG}` for `patch` option.
